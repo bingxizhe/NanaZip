@@ -11,6 +11,9 @@
 
 #include "../../../Windows/DLL.h"
 #include "../../../Windows/ErrorMsg.h"
+// **************** NanaZip Modification Start ****************
+#include "../../../Windows/FileFind.h"
+// **************** NanaZip Modification End ****************
 #include "../../../Windows/FileDir.h"
 #include "../../../Windows/FileMapping.h"
 #include "../../../Windows/MemoryLock.h"
@@ -355,6 +358,190 @@ HRESULT CompressFiles(
       waitFinish, &event);
   MY_TRY_FINISH
 }
+
+// **************** NanaZip Modification Start ****************
+static bool IsArchiveNameUsed(const UStringVector &usedNames, const UString &name)
+{
+  FOR_VECTOR (i, usedNames)
+    if (usedNames[i].IsEqualTo_NoCase(name))
+      return true;
+  return false;
+}
+
+struct CBatchJobItem
+{
+  UString ArcPath; // the full path of the archive (with extension)
+  UString SrcPath; // the full path of the source file or folder
+};
+
+/*
+  CreateMapBatch() creates the file mapping for the batch compress task. The
+  data format is the sequence of the NUL-terminated strings (wchar_t):
+    the zero marker, the decimal job count, and then the three strings for
+    each job (the archive type, the archive path and the source path).
+*/
+static HRESULT CreateMapBatch(const UString &arcType,
+    const CObjectVector<CBatchJobItem> &jobs,
+    CFileMapping &fileMapping, NSynchronization::CManualResetEvent &event,
+    UString &params)
+{
+  size_t totalChars = 2; // the zero marker and the terminator of the count
+  totalChars += jobs.Size() >= 10 ? 10 : 1; // rough size of the count string
+  FOR_VECTOR (i, jobs)
+  {
+    totalChars += arcType.Len() + 1;
+    totalChars += jobs[i].ArcPath.Len() + 1;
+    totalChars += jobs[i].SrcPath.Len() + 1;
+  }
+  totalChars *= sizeof(wchar_t);
+
+  CRandNameGenerator random;
+
+  UString mappingName;
+  for (;;)
+  {
+    random.GenerateName(mappingName, "7zMap");
+    const WRes wres = fileMapping.Create(PAGE_READWRITE, totalChars, GetSystemString(mappingName));
+    if (fileMapping.IsCreated() && wres == 0)
+      break;
+    if (wres != ERROR_ALREADY_EXISTS)
+      return HRESULT_FROM_WIN32(wres);
+    fileMapping.Close();
+  }
+
+  UString eventName;
+  for (;;)
+  {
+    random.GenerateName(eventName, "7zEvent");
+    const WRes wres = event.CreateWithName(false, GetSystemString(eventName));
+    if (event.IsCreated() && wres == 0)
+      break;
+    if (wres != ERROR_ALREADY_EXISTS)
+      return HRESULT_FROM_WIN32(wres);
+    event.Close();
+  }
+
+  params += '#';
+  params += mappingName;
+  params += ':';
+  char temp[32];
+  ConvertUInt64ToString(totalChars, temp);
+  params += temp;
+
+  params += ':';
+  params += eventName;
+
+  LPVOID data = fileMapping.Map(FILE_MAP_WRITE, 0, totalChars);
+  if (!data)
+    return E_FAIL;
+  CFileUnmapper unmapper(data);
+  {
+    wchar_t *cur = (wchar_t *)data;
+    *cur++ = 0; // it means wchar_t strings (UTF-16 in WIN32)
+    UString countString;
+    countString.Add_UInt32(jobs.Size());
+    wmemcpy(cur, (const wchar_t *)countString, countString.Len() + 1);
+    cur += countString.Len() + 1;
+    FOR_VECTOR (i, jobs)
+    {
+      const UString *strings[3] = { &arcType, &jobs[i].ArcPath, &jobs[i].SrcPath };
+      for (unsigned k = 0; k < 3; k++)
+      {
+        const UString &s = *strings[k];
+        unsigned len = s.Len() + 1;
+        wmemcpy(cur, (const wchar_t *)s, len);
+        cur += len;
+      }
+    }
+  }
+  return S_OK;
+}
+
+/*
+CompressFilesSeparately() compresses each item from paths to its own archive.
+The name of the archive is generated from the name of the item:
+  - directory  : the full name of the directory
+  - file       : the name of the file without the last extension
+The archive is placed to the same folder as the original item. If the target
+archive already exists (or another archive in this batch uses the same name),
+we add " (n)" suffix before the extension, so the original items and the
+existing archives are never overwritten.
+
+All the jobs are sent to the single NanaZip GUI process as one batch compress
+task ("-sbc#" switch), so they run sequentially in the same progress window,
+and the user can cancel the whole task at once.
+*/
+void CompressFilesSeparately(const UStringVector &paths,
+    const UString &arcType, bool waitFinish)
+{
+  MY_TRY_BEGIN
+  CObjectVector<CBatchJobItem> jobs;
+  UStringVector usedNames;
+  FOR_VECTOR (i, paths)
+  {
+    const UString &path = paths[i];
+    const FString pathF = us2fs(path);
+    NWindows::NFile::NFind::CFileInfo fi;
+    if (!fi.Find(pathF))
+      continue; // the item is not available, so we just skip it
+    UString name = fs2us(fi.Name);
+    if (!fi.IsDir())
+    {
+      const int dotPos = name.ReverseFind_Dot();
+      if (dotPos > 0)
+        name.DeleteFrom((unsigned)dotPos);
+    }
+    if (name.IsEmpty())
+      continue;
+    FString folderPrefix;
+    NWindows::NFile::NDir::GetOnlyDirPrefix(pathF, folderPrefix);
+    const UString prefix = fs2us(folderPrefix);
+    UString arcName = name;
+    arcName += L'.';
+    arcName += arcType;
+    for (unsigned index = 2;; index++)
+    {
+      if (!NWindows::NFile::NFind::DoesFileOrDirExist(us2fs(prefix + arcName)) &&
+          !IsArchiveNameUsed(usedNames, arcName))
+        break;
+      arcName = name;
+      arcName += " (";
+      arcName.Add_UInt32(index);
+      arcName += ").";
+      arcName += arcType;
+    }
+    usedNames.Add(arcName);
+    CBatchJobItem &job = jobs.AddNew();
+    job.ArcPath = prefix + arcName;
+    job.SrcPath = path;
+  }
+  if (jobs.IsEmpty())
+  {
+    ErrorMessage(L"No valid items to compress.");
+    return;
+  }
+
+  UString params ('a');
+  params += " -an";
+  params += " -sbc";
+
+  CFileMapping fileMapping;
+  NSynchronization::CManualResetEvent event;
+  HRESULT result = CreateMapBatch(arcType, jobs, fileMapping, event, params);
+
+  // AddLagePagesSwitch() must be called after CreateMapBatch(), because
+  // CreateMapBatch() appends the "#mapping:size:event" parameter directly
+  // after "-sbc", and any switch added in between would break the "-sbc#"
+  // token.
+  AddLagePagesSwitch(params);
+
+  if (result == S_OK)
+    result = Call7zGui(params, waitFinish, &event);
+  if (result != S_OK)
+    ErrorMessageHRESULT(result);
+  MY_TRY_FINISH_VOID
+}
+// **************** NanaZip Modification End ****************
 
 static void ExtractGroupCommand(const UStringVector &arcPaths, UString &params, bool isHash)
 {

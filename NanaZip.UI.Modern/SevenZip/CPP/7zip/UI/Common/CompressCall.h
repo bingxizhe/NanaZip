@@ -16,6 +16,13 @@ HRESULT CompressFiles(
     bool email, bool showDialog, bool waitFinish);
 
 // **************** NanaZip Modification Start ****************
+void CompressFilesSeparately(
+    const UStringVector &paths,
+    const UString &arcType,
+    bool waitFinish);
+// **************** NanaZip Modification End ****************
+
+// **************** NanaZip Modification Start ****************
 // void ExtractArchives(const UStringVector &arcPaths, const UString &outFolder, bool showDialog, bool elimDup, UInt32 writeZone);
 void ExtractArchives(const UStringVector &arcPaths, const UString &outFolder, bool showDialog, bool elimDup, UInt32 writeZone, bool smartExtract = false, bool openFolder = false);
 // **************** NanaZip Modification End ****************

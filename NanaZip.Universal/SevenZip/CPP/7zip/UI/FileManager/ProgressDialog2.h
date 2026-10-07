@@ -47,6 +47,20 @@ public:
   UString _status;
   UString _filePath;
 
+  // **************** NanaZip Modification Start ****************
+  // The batch progress rescaling support. When _batchEnabled is true, the
+  // progress of the current job is rescaled to the whole batch:
+  //   completed = _batchDoneBytes + (the completed bytes of the current job)
+  //   total = _batchTotalBytes
+  // (_batchTotalBytes can be zero, for example, if all the items are empty.)
+  bool _batchEnabled;
+  UInt64 _batchDoneBytes;
+  UInt64 _batchTotalBytes;
+  UString _batchPrefix;
+
+  void Set_BatchProgress(UInt64 doneBytes, UInt64 totalBytes, const UString &prefix);
+  // **************** NanaZip Modification End ****************
+
   UStringVector Messages;
   CProgressFinalMessage FinalMessage;
 

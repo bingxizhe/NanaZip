@@ -108,6 +108,11 @@ namespace winrt::NanaZip::Modern::implementation
                 this->m_PausedTitleText.size()));
             Title.push_back(L' ');
         }
+        if (!this->m_ProgressPrefix.empty())
+        {
+            Title.append(this->m_ProgressPrefix);
+            Title.push_back(L' ');
+        }
         if (static_cast<std::uint64_t>(-1) != this->m_PercentageProgress)
         {
             Title.append(Mile::FormatWideString(
@@ -294,6 +299,9 @@ namespace winrt::NanaZip::Modern::implementation
         std::wstring Title = StatusRequest->Title
             ? std::wstring(StatusRequest->Title)
             : L"";
+        std::wstring ProgressPrefix = StatusRequest->Prefix
+            ? std::wstring(StatusRequest->Prefix)
+            : L"";
         std::wstring FilePath = StatusRequest->FilePath
             ? std::wstring(StatusRequest->FilePath)
             : L"";
@@ -342,6 +350,12 @@ namespace winrt::NanaZip::Modern::implementation
             if (Title != this->m_Title)
             {
                 this->m_Title = Title;
+                NeedUpdateTitle = true;
+            }
+
+            if (ProgressPrefix != this->m_ProgressPrefix)
+            {
+                this->m_ProgressPrefix = ProgressPrefix;
                 NeedUpdateTitle = true;
             }
 

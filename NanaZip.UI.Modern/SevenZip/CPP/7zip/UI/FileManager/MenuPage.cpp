@@ -60,6 +60,11 @@ static const CContextMenuItem kMenuItems[] =
   { IDS_CONTEXT_COMPRESS_TO, kCompressTo7z },
   { IDS_CONTEXT_COMPRESS_TO, kCompressToZip },
 
+// **************** NanaZip Modification Start ****************
+  { IDS_CONTEXT_COMPRESS_SEPARATELY_ZIP, kCompressToZipSeparately },
+  { IDS_CONTEXT_COMPRESS_SEPARATELY_7Z, kCompressTo7zSeparately },
+// **************** NanaZip Modification End ****************
+
   #ifndef UNDER_CE
   { IDS_CONTEXT_COMPRESS_EMAIL, kCompressEmail },
   { IDS_CONTEXT_COMPRESS_TO_EMAIL, kCompressTo7zEmail },

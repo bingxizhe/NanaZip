@@ -30,6 +30,12 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!--
+        Disable C4127 (conditional expression is constant) for the vendored
+        Brotli/Lizard/LZ5 code, because the newer MSVC toolsets may raise it
+        under /W4 and we should not patch the third-party source code.
+      -->
+      <DisableSpecificWarnings>4127;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <ModuleDefinitionFile>SevenZip\CPP\7zip\Archive\Archive2.def</ModuleDefinitionFile>
@@ -246,22 +252,22 @@
     <ClCompile Include="Brotli\common\shared_dictionary.c" />
     <ClCompile Include="Brotli\common\transform.c" />
     <ClCompile Include="Brotli\dec\bit_reader.c">
-      <DisableSpecificWarnings>4100;</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4100;4127;</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="Brotli\dec\decode.c">
-      <DisableSpecificWarnings>4100;</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4100;4127;</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="Brotli\dec\dec_static_init.c" />
     <ClCompile Include="Brotli\dec\huffman.c" />
     <ClCompile Include="Brotli\dec\prefix.c" />
     <ClCompile Include="Brotli\dec\state.c">
-      <DisableSpecificWarnings>4100;</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4100;4127;</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="Brotli\enc\backward_references.c">
-      <DisableSpecificWarnings>4189;</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4189;4127;</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="Brotli\enc\backward_references_hq.c">
-      <DisableSpecificWarnings>4189;</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4189;4127;</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="Brotli\enc\bit_cost.c" />
     <ClCompile Include="Brotli\enc\block_splitter.c" />
@@ -273,10 +279,10 @@
     <ClCompile Include="Brotli\enc\compress_fragment_two_pass.c" />
     <ClCompile Include="Brotli\enc\dictionary_hash.c" />
     <ClCompile Include="Brotli\enc\encode.c">
-      <DisableSpecificWarnings>4189;</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4189;4127;</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="Brotli\enc\encoder_dict.c">
-      <DisableSpecificWarnings>4189;</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4189;4127;</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="Brotli\enc\enc_static_init.c" />
     <ClCompile Include="Brotli\enc\entropy_encode.c" />

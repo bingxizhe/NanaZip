@@ -30,4 +30,21 @@ HRESULT UpdateGUI(
     CUpdateCallbackGUI *callback,
     HWND hwndParent = NULL);
 
+// **************** NanaZip Modification Start ****************
+/*
+  UpdateGUIBatch() compresses each job to its own archive, and all jobs are
+  running sequentially in the same progress window. The spec is the parameter
+  of the "-sbc#" switch, in the following form:
+  "MappingName:MappingSize:EventName".
+
+  RESULT can be S_OK, E_ABORT (user break) or an error code.
+  messageWasDisplayed = true if the error message was displayed already.
+*/
+HRESULT UpdateGUIBatch(
+    CCodecs *codecs,
+    const UString &spec,
+    bool &messageWasDisplayed,
+    HWND hwndParent = NULL);
+// **************** NanaZip Modification End ****************
+
 #endif

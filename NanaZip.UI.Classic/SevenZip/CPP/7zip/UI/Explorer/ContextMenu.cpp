@@ -224,7 +224,11 @@ static const CContextMenuCommand g_Commands[] =
   CMD_REC( kCompressTo7z,       "CompressTo7z",       IDS_CONTEXT_COMPRESS_TO),
   CMD_REC( kCompressTo7zEmail,  "CompressTo7zEmail",  IDS_CONTEXT_COMPRESS_TO_EMAIL),
   CMD_REC( kCompressToZip,      "CompressToZip",      IDS_CONTEXT_COMPRESS_TO),
-  CMD_REC( kCompressToZipEmail, "CompressToZipEmail", IDS_CONTEXT_COMPRESS_TO_EMAIL)
+  CMD_REC( kCompressToZipEmail, "CompressToZipEmail", IDS_CONTEXT_COMPRESS_TO_EMAIL),
+  // **************** NanaZip Modification Start ****************
+  CMD_REC( kCompressToZipSeparately, "CompressToZipSeparately", IDS_CONTEXT_COMPRESS_SEPARATELY_ZIP),
+  CMD_REC( kCompressTo7zSeparately,  "CompressTo7zSeparately",  IDS_CONTEXT_COMPRESS_SEPARATELY_7Z)
+  // **************** NanaZip Modification End ****************
 };
 
 
@@ -717,7 +721,10 @@ STDMETHODIMP CZipContextMenu::QueryContextMenu(HMENU hMenu, UINT indexMenu,
     }
   }
 
-  if (_fileNames.Size() > 0 && currentCommandID + 10 <= commandIDLast)
+  // **************** NanaZip Modification Start ****************
+  // was: if (_fileNames.Size() > 0 && currentCommandID + 10 <= commandIDLast)
+  if (_fileNames.Size() > 0 && currentCommandID + 13 <= commandIDLast)
+  // **************** NanaZip Modification End ****************
   {
     bool needExtract = (!fi0.IsDir() && DoNeedExtract(fi0.Name));
 
@@ -885,6 +892,26 @@ STDMETHODIMP CZipContextMenu::QueryContextMenu(HMENU hMenu, UINT indexMenu,
       Set_UserString_in_LastCommand(s);
       MyInsertMenu(popupMenu, subIndex++, currentCommandID++, s, bitmap);
     }
+
+    // **************** NanaZip Modification Start ****************
+    // CompressToZipSeparately
+    if ((contextMenuFlags & NContextMenuFlags::kCompressToZipSeparately) != 0
+        && !_dropMode)
+    {
+      CCommandMapItem cmi;
+      AddCommand(kCompressToZipSeparately, mainString, cmi);
+      MyInsertMenu(popupMenu, subIndex++, currentCommandID++, mainString, bitmap);
+    }
+
+    // CompressTo7zSeparately
+    if ((contextMenuFlags & NContextMenuFlags::kCompressTo7zSeparately) != 0
+        && !_dropMode)
+    {
+      CCommandMapItem cmi;
+      AddCommand(kCompressTo7zSeparately, mainString, cmi);
+      MyInsertMenu(popupMenu, subIndex++, currentCommandID++, mainString, bitmap);
+    }
+    // **************** NanaZip Modification End ****************
 
     #ifdef EMAIL_SUPPORT
     // CompressToZipEmail
@@ -1249,6 +1276,18 @@ HRESULT CZipContextMenu::InvokeCommandCommon(const CCommandMapItem &cmi)
             );
         break;
       }
+
+      // **************** NanaZip Modification Start ****************
+      case kCompressToZipSeparately:
+      case kCompressTo7zSeparately:
+      {
+        CompressFilesSeparately(_fileNames,
+            (cmdID == kCompressToZipSeparately) ? L"zip" : L"7z",
+            false // waitFinish
+            );
+        break;
+      }
+      // **************** NanaZip Modification End ****************
 
       case kHash_CRC32:
       case kHash_CRC64:

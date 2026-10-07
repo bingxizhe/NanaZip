@@ -158,6 +158,22 @@ static int Main2()
     return 0;
   }
 
+  // **************** NanaZip Modification Start ****************
+  // Extract the parameter of the "-sbc#" switch (the batch compress task for
+  // the "compress each file/folder to its own archive" feature) before the
+  // command line parser, because it is not a standard 7-Zip switch.
+  UString batchSpec;
+  FOR_VECTOR (i, commandStrings)
+  {
+    if (commandStrings[i].IsPrefixedBy_Ascii_NoCase("-sbc#"))
+    {
+      batchSpec = commandStrings[i].Ptr(5);
+      commandStrings.Delete(i);
+      break;
+    }
+  }
+  // **************** NanaZip Modification End ****************
+
   CArcCmdLineOptions options;
   CArcCmdLineParser parser;
 
@@ -359,6 +375,23 @@ static int Main2()
   }
   else if (options.Command.IsFromUpdateGroup())
   {
+    // **************** NanaZip Modification Start ****************
+    // The batch compress task: compress each item to its own archive in the
+    // same progress window.
+    if (!batchSpec.IsEmpty())
+    {
+      bool messageWasDisplayed = false;
+      const HRESULT result = UpdateGUIBatch(
+          codecs, batchSpec, messageWasDisplayed);
+      if (result != S_OK)
+      {
+        if (result != E_ABORT && messageWasDisplayed)
+          return NExitCode::kFatalError;
+        throw CSystemException(result);
+      }
+      return NExitCode::kSuccess;
+    }
+    // **************** NanaZip Modification End ****************
     #ifndef Z7_NO_CRYPTO
     bool passwordIsDefined = options.PasswordEnabled && !options.Password.IsEmpty();
     #endif

@@ -156,6 +156,13 @@ typedef struct _K7_PROGRESS_WINDOW_STATUS
      * @brief The status message.
      */
     LPCWSTR Status;
+
+    /**
+     * @brief The prefix of the title for the batch tasks, such as "[1/3]" for
+     *        the first task of the three tasks. If nullptr, the prefix is
+     *        empty.
+     */
+    LPCWSTR Prefix;
 } K7_PROGRESS_WINDOW_STATUS, *PK7_PROGRESS_WINDOW_STATUS;
 
 /**

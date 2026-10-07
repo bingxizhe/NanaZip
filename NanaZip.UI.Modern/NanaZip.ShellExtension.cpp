@@ -195,6 +195,9 @@ namespace NanaZip::ShellExtension
             CompressTo7zEmail,
             CompressToZipEmail,
 
+            CompressToZipSeparately,
+            CompressTo7zSeparately,
+
             HashCRC32,
             HashCRC64,
             HashSHA1,
@@ -366,6 +369,13 @@ namespace NanaZip::ShellExtension
 
             FString FolderPrefix;
 
+            // The batch compress commands don't use the archive name and the
+            // folder prefix at all, so we should not abort the whole batch
+            // when the first item has disappeared after the menu was shown.
+            const bool IsBatchCompress = (
+                this->m_CommandID == CommandID::CompressToZipSeparately ||
+                this->m_CommandID == CommandID::CompressTo7zSeparately);
+
             std::wstring ArchiveName;
             if (FilePaths.size() > 0)
             {
@@ -387,16 +397,23 @@ namespace NanaZip::ShellExtension
                 {
                     if (!FileInfo0.Find(us2fs(FileName)))
                     {
-                        return ::HRESULT_FROM_WIN32(::GetLastError());
+                        if (!IsBatchCompress)
+                        {
+                            return ::HRESULT_FROM_WIN32(::GetLastError());
+                        }
                     }
-                    NWindows::NFile::NDir::GetOnlyDirPrefix(
-                        us2fs(FileName),
-                        FolderPrefix);
+                    else
+                    {
+                        NWindows::NFile::NDir::GetOnlyDirPrefix(
+                            us2fs(FileName),
+                            FolderPrefix);
+                    }
                 }
 
                 const UString Name = CreateArchiveName(
                     FileNames,
-                    FileNames.Size() == 1 ? &FileInfo0 : nullptr);
+                    (!IsBatchCompress && FileNames.Size() == 1)
+                        ? &FileInfo0 : nullptr);
                 ArchiveName = std::wstring(Name.Ptr(), Name.Len());
 
             }
@@ -508,6 +525,22 @@ namespace NanaZip::ShellExtension
                     Email,
                     ShowDialog,
                     false);
+
+                break;
+            }
+            case CommandID::CompressToZipSeparately:
+            case CommandID::CompressTo7zSeparately:
+            {
+                // Note: we must not wait here, because Invoke() of the shell
+                // extension runs in the Explorer process, and waiting here
+                // blocks the Explorer with the busy state for the whole
+                // compressing time. The batch task runs sequentially inside
+                // the single GUI process anyway.
+                CompressFilesSeparately(
+                    FileNames,
+                    (this->m_CommandID == CommandID::CompressToZipSeparately)
+                        ? L"zip" : L"7z",
+                    false); // waitFinish
 
                 break;
             }
@@ -839,6 +872,30 @@ namespace NanaZip::ShellExtension
                             TranslatedString.Ptr(),
                             TranslatedString.Len()),
                         CommandID::CompressToZip));
+            }
+
+            if (ContextMenuFlags & NContextMenuFlags::kCompressToZipSeparately)
+            {
+                UString TranslatedString;
+                LangString(IDS_CONTEXT_COMPRESS_SEPARATELY_ZIP, TranslatedString);
+                this->m_SubCommands.push_back(
+                    winrt::make<ExplorerCommandBase>(
+                        std::wstring(
+                            TranslatedString.Ptr(),
+                            TranslatedString.Len()),
+                        CommandID::CompressToZipSeparately));
+            }
+
+            if (ContextMenuFlags & NContextMenuFlags::kCompressTo7zSeparately)
+            {
+                UString TranslatedString;
+                LangString(IDS_CONTEXT_COMPRESS_SEPARATELY_7Z, TranslatedString);
+                this->m_SubCommands.push_back(
+                    winrt::make<ExplorerCommandBase>(
+                        std::wstring(
+                            TranslatedString.Ptr(),
+                            TranslatedString.Len()),
+                        CommandID::CompressTo7zSeparately));
             }
 
             if (ContextMenuFlags & NContextMenuFlags::kCompressEmail)

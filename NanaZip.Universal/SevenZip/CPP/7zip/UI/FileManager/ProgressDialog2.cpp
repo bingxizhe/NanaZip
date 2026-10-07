@@ -91,6 +91,9 @@ CProgressSync::CProgressSync():
     _totalFiles(UNDEFINED_VAL), _curFiles(0),
     _inSize(UNDEFINED_VAL),
     _outSize(UNDEFINED_VAL)
+    // **************** NanaZip Modification Start ****************
+    , _batchEnabled(false), _batchDoneBytes(0), _batchTotalBytes(0)
+    // **************** NanaZip Modification End ****************
     {}
 
 #define CHECK_STOP  if (_stopped) return E_ABORT; if (!_paused) return S_OK;
@@ -126,7 +129,9 @@ HRESULT CProgressSync::ScanProgress(UInt64 numFiles, UInt64 totalSize, const FSt
   {
     CRITICAL_LOCK
     _totalFiles = numFiles;
-    _totalBytes = totalSize;
+    // **************** NanaZip Modification Start ****************
+    _totalBytes = _batchEnabled ? _batchTotalBytes : totalSize;
+    // **************** NanaZip Modification End ****************
     _filePath = fs2us(fileName);
     _isDir = isDir;
     // _completedBytes = 0;
@@ -148,7 +153,9 @@ HRESULT CProgressSync::Set_NumFilesTotal(UInt64 val)
 void CProgressSync::Set_NumBytesTotal(UInt64 val)
 {
   CRITICAL_LOCK
-  _totalBytes = val;
+  // **************** NanaZip Modification Start ****************
+  _totalBytes = _batchEnabled ? _batchTotalBytes : val;
+  // **************** NanaZip Modification End ****************
 }
 
 void CProgressSync::Set_NumFilesCur(UInt64 val)
@@ -162,7 +169,21 @@ HRESULT CProgressSync::Set_NumBytesCur(const UInt64 *val)
   {
     CRITICAL_LOCK
     if (val)
-      _completedBytes = *val;
+    {
+      // **************** NanaZip Modification Start ****************
+      if (_batchEnabled)
+      {
+        _completedBytes = _batchDoneBytes + *val;
+        // The pre-scan can be truncated by its budget, so the batch total can
+        // be smaller than the sum of the real sizes. Clamp to keep the
+        // percentage within 100%.
+        if (_completedBytes > _batchTotalBytes)
+          _completedBytes = _batchTotalBytes;
+      }
+      else
+        _completedBytes = *val;
+      // **************** NanaZip Modification End ****************
+    }
     CHECK_STOP
   }
   return CheckStop();
@@ -172,7 +193,16 @@ HRESULT CProgressSync::Set_NumBytesCur(UInt64 val)
 {
   {
     CRITICAL_LOCK
-    _completedBytes = val;
+    // **************** NanaZip Modification Start ****************
+    if (_batchEnabled)
+    {
+      _completedBytes = _batchDoneBytes + val;
+      if (_completedBytes > _batchTotalBytes)
+        _completedBytes = _batchTotalBytes;
+    }
+    else
+      _completedBytes = val;
+    // **************** NanaZip Modification End ****************
     CHECK_STOP
   }
   return CheckStop();
@@ -192,6 +222,19 @@ void CProgressSync::Set_TitleFileName(const UString &fileName)
   CRITICAL_LOCK
   _titleFileName = fileName;
 }
+
+// **************** NanaZip Modification Start ****************
+void CProgressSync::Set_BatchProgress(UInt64 doneBytes, UInt64 totalBytes, const UString &prefix)
+{
+  CRITICAL_LOCK
+  _batchEnabled = true;
+  _batchDoneBytes = doneBytes;
+  _batchTotalBytes = totalBytes;
+  _batchPrefix = prefix;
+  if (_batchEnabled)
+    _totalBytes = _batchTotalBytes;
+}
+// **************** NanaZip Modification End ****************
 
 void CProgressSync::Set_Status(const UString &s)
 {
@@ -979,6 +1022,7 @@ void CProgressDialog::ModernUpdateStatus()
         this->_title.Len());
     std::wstring FilePath;
     std::wstring StatusMessage;
+    std::wstring ModernPrefixBuffer;
     {
         NSynchronization::CCriticalSectionLock Lock(this->Sync._cs);
         Status.BytesProgressMode = !this->Sync._filesProgressMode;
@@ -1012,6 +1056,12 @@ void CProgressDialog::ModernUpdateStatus()
                 this->Sync._status.Ptr(),
                 this->Sync._status.Len());
             Status.Status = StatusMessage.c_str();
+        }
+        {
+            ModernPrefixBuffer = std::wstring(
+                this->Sync._batchPrefix.Ptr(),
+                this->Sync._batchPrefix.Len());
+            Status.Prefix = ModernPrefixBuffer.c_str();
         }
     }
     ::K7ModernUpdateProgressWindowStatus(this->_window, &Status);

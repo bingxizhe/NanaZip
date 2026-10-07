@@ -49,6 +49,10 @@ public:
     kCompressTo7zEmail,
     kCompressToZip,
     kCompressToZipEmail,
+    // **************** NanaZip Modification Start ****************
+    kCompressToZipSeparately,
+    kCompressTo7zSeparately,
+    // **************** NanaZip Modification End ****************
     kHash_CRC32,
     kHash_CRC64,
     kHash_XXH32,

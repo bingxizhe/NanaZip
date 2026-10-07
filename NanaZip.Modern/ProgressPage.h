@@ -74,6 +74,7 @@ namespace winrt::NanaZip::Modern::implementation
         std::uint64_t m_ElapsedTime = 0;
 
         std::wstring m_Title;
+        std::wstring m_ProgressPrefix;
         std::wstring m_FilePath;
         std::uint64_t m_TotalSize = static_cast<std::uint64_t>(-1);
         std::uint64_t m_ProcessedSize = static_cast<std::uint64_t>(-1);

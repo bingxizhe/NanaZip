@@ -8,10 +8,19 @@
 
 #include "../../../Windows/DLL.h"
 #include "../../../Windows/FileDir.h"
+// **************** NanaZip Modification Start ****************
+#include "../../../Windows/FileFind.h"
+#include "../../../Windows/FileMapping.h"
+#include "../../../Windows/Synchronization.h"
+// **************** NanaZip Modification End ****************
 #include "../../../Windows/FileName.h"
 #include "../../../Windows/Thread.h"
 
 #include "../Common/WorkDir.h"
+// **************** NanaZip Modification Start ****************
+#include "../Common/OpenArchive.h"
+#include "../FileManager/RegistryUtils.h"
+// **************** NanaZip Modification End ****************
 
 #include "../Explorer/MyMessages.h"
 
@@ -606,3 +615,390 @@ HRESULT UpdateGUI(
   messageWasDisplayed = tu.ThreadFinishedOK && tu.MessagesDisplayed;
   return tu.Result;
 }
+
+// **************** NanaZip Modification Start ****************
+namespace NBatchCompress
+{
+  struct CJob
+  {
+    UString ArcType; // the archive type, such as "zip" or "7z"
+    UString ArcPath; // the full path of the archive (with extension)
+    UString SrcPath; // the full path of the source file or folder
+  };
+
+  static const unsigned kMaxTreeDepth = 100;
+
+  // The pre-scan is only used for the batch progress display, so we stop it
+  // when too many entries have been scanned, to avoid a second full traversal
+  // of huge source trees.
+  static const unsigned kMaxScanEntries = 200000;
+
+  // The maximum number of the failure entries in the final error message.
+  static const unsigned kMaxErrorMessages = 32;
+
+  static HRESULT GetTreeSize(const FString &path, bool isDir, unsigned depth,
+      UInt64 &size, unsigned &entries)
+  {
+    if (entries >= kMaxScanEntries)
+      return S_OK; // the scan budget is exhausted, so we keep the partial result
+    if (!isDir)
+    {
+      NFind::CFileInfo fi;
+      if (!fi.Find(path))
+        return HRESULT_FROM_WIN32(::GetLastError());
+      size += fi.Size;
+      entries++;
+      return S_OK;
+    }
+    if (depth >= kMaxTreeDepth)
+      return S_OK;
+    FString prefix (path);
+    NName::NormalizeDirPathPrefix(prefix);
+    NFind::CEnumerator enumerator;
+    enumerator.SetDirPrefix(prefix);
+    for (;;)
+    {
+      NFind::CFileInfo fi;
+      bool found = enumerator.Next(fi);
+      if (!found)
+        break;
+      entries++;
+      RINOK(GetTreeSize(prefix + fi.Name, fi.IsDir(), depth + 1, size, entries))
+    }
+    return S_OK;
+  }
+
+  static void AppendBatchError(UString &messages, unsigned &appended,
+      unsigned &omitted, const UString &path, const UString &message)
+  {
+    if (appended >= kMaxErrorMessages)
+    {
+      omitted++;
+      return;
+    }
+    appended++;
+    messages += path;
+    messages += L" : ";
+    messages += message;
+    messages.Add_LF();
+  }
+
+  class CThreadUpdatingBatch: public CProgressThreadVirt
+  {
+    HRESULT ProcessVirt() Z7_override;
+  public:
+    CCodecs *codecs;
+    CObjectVector<NBatchCompress::CJob> *Jobs;
+    CUpdateCallbackGUI *UpdateCallbackGUI;
+  };
+
+  static bool ReadMappingString(const wchar_t *data, UInt32 numChars,
+      UInt32 &pos, UString &dest)
+  {
+    for (;;)
+    {
+      if (pos >= numChars)
+        return false;
+      const wchar_t c = data[pos++];
+      if (c == 0)
+        return true;
+      dest += c;
+    }
+  }
+}
+
+HRESULT NBatchCompress::CThreadUpdatingBatch::ProcessVirt()
+{
+  CRecordVector<UInt64> sizes;
+  UInt64 totalBytes = 0;
+  unsigned scannedEntries = 0;
+  FOR_VECTOR (i, *Jobs)
+  {
+    const NBatchCompress::CJob &job = (*Jobs)[i];
+    UInt64 size = 0;
+    NFind::CFileInfo fi;
+    if (fi.Find(us2fs(job.SrcPath)))
+    {
+      // Best effort: if the size scan fails or the scan budget is exhausted,
+      // we just use the partially computed size, because it is only used for
+      // the progress display.
+      GetTreeSize(us2fs(job.SrcPath), fi.IsDir(), 0, size, scannedEntries);
+    }
+    sizes.Add(size);
+    totalBytes += size;
+  }
+
+  Sync.Set_BatchProgress(0, totalBytes, UString());
+
+  NCompression::CInfo registryInfo;
+  registryInfo.Load();
+
+  UInt64 doneBytes = 0;
+  unsigned errorCount = 0;
+  unsigned appendedErrors = 0;
+  unsigned omittedErrors = 0;
+  UString errorMessages;
+
+  FOR_VECTOR (i, *Jobs)
+  {
+    const NBatchCompress::CJob &job = (*Jobs)[i];
+
+    UString prefix (L'[');
+    prefix.Add_UInt32(i + 1);
+    prefix += L'/';
+    prefix.Add_UInt32(Jobs->Size());
+    prefix += L']';
+
+    RINOK(Sync.CheckStop())
+
+    Sync.Set_BatchProgress(doneBytes, totalBytes, prefix);
+    Sync.Set_TitleFileName(job.SrcPath);
+
+    // Defensive check: never let the archive overwrite its own source.
+    if (job.ArcPath.IsEqualTo_NoCase(job.SrcPath))
+    {
+      errorCount++;
+      AppendBatchError(errorMessages, appendedErrors, omittedErrors,
+          job.SrcPath, L"The archive path is the same as the source path");
+      doneBytes += sizes[i];
+      Sync.Set_BatchProgress(doneBytes, totalBytes, prefix);
+      continue;
+    }
+
+    CObjectVector<COpenType> formatIndices;
+    if (!ParseOpenTypes(*codecs, job.ArcType, formatIndices) ||
+        formatIndices.IsEmpty())
+    {
+      errorCount++;
+      AppendBatchError(errorMessages, appendedErrors, omittedErrors,
+          job.SrcPath, L"Unsupported archive type");
+      doneBytes += sizes[i];
+      Sync.Set_BatchProgress(doneBytes, totalBytes, prefix);
+      continue;
+    }
+
+    CUpdateOptions options;
+    if (!options.InitFormatIndex(codecs, formatIndices, job.ArcPath) ||
+        !options.SetArcPath(codecs, job.ArcPath))
+    {
+      errorCount++;
+      AppendBatchError(errorMessages, appendedErrors, omittedErrors,
+          job.SrcPath, L"Updating is not supported");
+      doneBytes += sizes[i];
+      Sync.Set_BatchProgress(doneBytes, totalBytes, prefix);
+      continue;
+    }
+
+    {
+      CUpdateArchiveCommand uc;
+      uc.UserArchivePath = job.ArcPath;
+      uc.ActionSet = NUpdateArchive::k_ActionSet_Add;
+      options.Commands.Add(uc);
+    }
+
+    // Apply the registry compression settings, same as CompressFiles().
+    if (job.ArcType.IsEqualTo_Ascii_NoCase("7z"))
+    {
+      FOR_VECTOR (k, registryInfo.Formats)
+      {
+        const NCompression::CFormatOptions &fo = registryInfo.Formats[k];
+        if (!job.ArcType.IsEqualTo_NoCase(GetUnicodeString(fo.FormatID)))
+          continue;
+
+        CProperty prop;
+        if (!fo.Method.IsEmpty())
+        {
+          prop.Name = "0";
+          prop.Value = GetUnicodeString(fo.Method);
+          options.MethodMode.Properties.Add(prop);
+        }
+        if (fo.Level != (UInt32)(Int32)-1)
+        {
+          prop.Name = "x";
+          prop.Value.Add_UInt32(fo.Level);
+          options.MethodMode.Properties.Add(prop);
+        }
+        if (fo.Dictionary && fo.Dictionary != (UInt32)(Int32)-1)
+        {
+          prop.Name = "d";
+          prop.Value.Add_UInt32(fo.Dictionary);
+          prop.Value += "b";
+          options.MethodMode.Properties.Add(prop);
+        }
+        if (fo.BlockLogSize && fo.BlockLogSize != (UInt32)(Int32)-1)
+        {
+          prop.Name = "s";
+          prop.Value.Add_UInt64((UInt64)1 << fo.BlockLogSize);
+          prop.Value += "b";
+          options.MethodMode.Properties.Add(prop);
+        }
+        if (fo.NumThreads && fo.NumThreads != (UInt32)(Int32)-1)
+        {
+          prop.Name = "mt";
+          prop.Value.Add_UInt32(fo.NumThreads);
+          options.MethodMode.Properties.Add(prop);
+        }
+        if (!fo.Options.IsEmpty())
+        {
+          UStringVector strings;
+          SplitString(GetUnicodeString(fo.Options), strings);
+          FOR_VECTOR (n, strings)
+          {
+            const UString &s = strings[n];
+            const int eq = s.Find(L'=');
+            if (eq < 0)
+            {
+              prop.Name = s;
+              prop.Value.Empty();
+            }
+            else
+            {
+              prop.Name.SetFrom(s, (unsigned)eq);
+              prop.Value = s.Ptr((unsigned)eq + 1);
+            }
+            options.MethodMode.Properties.Add(prop);
+          }
+        }
+        break;
+      }
+    }
+
+    NWildcard::CCensor censor;
+    {
+      NWildcard::CCensorPathProps props;
+      censor.AddPreItem(true, job.SrcPath, props);
+    }
+
+    CUpdateErrorInfo ei;
+    const HRESULT res = UpdateArchive(codecs, formatIndices, job.ArcPath,
+        censor, options, ei, UpdateCallbackGUI, UpdateCallbackGUI, true);
+
+    if (res == E_ABORT)
+      return res;
+
+    if (res != S_OK)
+    {
+      errorCount++;
+      UString message (ei.Message);
+      if (message.IsEmpty())
+        message = HResultToMessage(res);
+      AppendBatchError(errorMessages, appendedErrors, omittedErrors,
+          job.SrcPath, message);
+    }
+
+    doneBytes += sizes[i];
+    Sync.Set_BatchProgress(doneBytes, totalBytes, prefix);
+  }
+
+  if (errorCount != 0)
+  {
+    // The batch failure is reported once as a summary, and the per-item
+    // details are limited to kMaxErrorMessages entries, so the message stays
+    // readable for large batches.
+    UString summary;
+    summary.Add_UInt32(errorCount);
+    summary += L" of ";
+    summary.Add_UInt32(Jobs->Size());
+    summary += L" item(s) failed to compress.";
+    Sync.AddError_Message(summary);
+
+    if (omittedErrors != 0)
+    {
+      errorMessages += L"... and ";
+      errorMessages.Add_UInt32(omittedErrors);
+      errorMessages += L" more item(s) omitted.";
+      errorMessages.Add_LF();
+    }
+
+    FinalMessage.ErrorMessage.Title = L"NanaZip";
+    FinalMessage.ErrorMessage.Message = errorMessages;
+  }
+
+  return S_OK;
+}
+
+HRESULT UpdateGUIBatch(
+    CCodecs *codecs,
+    const UString &spec,
+    bool &messageWasDisplayed,
+    HWND hwndParent)
+{
+  messageWasDisplayed = false;
+
+  CObjectVector<NBatchCompress::CJob> jobs;
+  {
+    UString s (spec);
+    const int pos = s.Find(L':');
+    if (pos < 0)
+      throw "Incorrect Batch Compress command";
+    const int pos2 = s.Find(L':', (unsigned)(pos + 1));
+    if (pos2 < 0)
+      throw "Incorrect Batch Compress command";
+
+    s.DeleteFrom((unsigned)pos2);
+
+    const wchar_t *end;
+    const UInt32 size = ConvertStringToUInt32(s.Ptr((unsigned)(pos + 1)), &end);
+    if (*end != 0
+        || size < sizeof(wchar_t)
+        || size > ((UInt32)1 << 31)
+        || size % sizeof(wchar_t) != 0)
+      throw "Unsupported Batch data size";
+
+    s.DeleteFrom((unsigned)pos);
+
+    CFileMapping map;
+    if (map.Open(FILE_MAP_READ, GetSystemString(s)) != 0)
+      return HRESULT_FROM_WIN32(::GetLastError());
+    const LPVOID data = map.Map(FILE_MAP_READ, 0, size);
+    if (!data)
+      return E_FAIL;
+    CFileUnmapper unmapper(data);
+
+    const wchar_t *p = (const wchar_t *)data;
+    if (*p != 0) // data format marker
+      throw "Unsupported Batch data";
+    const UInt32 numChars = size / sizeof(wchar_t);
+    UInt32 posCh = 1;
+
+    UString countString;
+    if (!NBatchCompress::ReadMappingString(p, numChars, posCh, countString))
+      throw "Batch data error";
+    const UInt32 count = ConvertStringToUInt32(countString, &end);
+    if (*end != 0)
+      throw "Batch data error";
+    for (UInt32 j = 0; j < count; j++)
+    {
+      NBatchCompress::CJob &job = jobs.AddNew();
+      if (!NBatchCompress::ReadMappingString(p, numChars, posCh, job.ArcType) ||
+          !NBatchCompress::ReadMappingString(p, numChars, posCh, job.ArcPath) ||
+          !NBatchCompress::ReadMappingString(p, numChars, posCh, job.SrcPath))
+        throw "Batch data error";
+    }
+  }
+  // The caller (CompressFilesSeparately) is waiting for this event, so we
+  // signal it after the mapping is closed.
+  {
+    NSynchronization::CManualResetEvent doneEvent;
+    if (doneEvent.Open(EVENT_MODIFY_STATE, false,
+        GetSystemString(spec.Ptr(spec.ReverseFind(L':') + 1))) == 0)
+      doneEvent.Set();
+  }
+
+  NBatchCompress::CThreadUpdatingBatch tu;
+  CUpdateCallbackGUI callback;
+  tu.codecs = codecs;
+  tu.Jobs = &jobs;
+  tu.UpdateCallbackGUI = &callback;
+  tu.UpdateCallbackGUI->ProgressDialog = &tu;
+  tu.UpdateCallbackGUI->Init();
+  tu.IconID = IDI_ICON;
+
+  const UString title = LangString(IDS_PROGRESS_COMPRESSING);
+
+  RINOK(tu.Create(title, hwndParent))
+
+  messageWasDisplayed = tu.ThreadFinishedOK && tu.MessagesDisplayed;
+  return tu.Result;
+}
+// **************** NanaZip Modification End ****************
