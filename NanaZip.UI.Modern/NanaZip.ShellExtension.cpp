@@ -874,7 +874,10 @@ namespace NanaZip::ShellExtension
                         CommandID::CompressToZip));
             }
 
-            if (ContextMenuFlags & NContextMenuFlags::kCompressToZipSeparately)
+            // The batch compress commands are only useful when multiple items
+            // are selected, so we don't show them for a single item.
+            if ((ContextMenuFlags & NContextMenuFlags::kCompressToZipSeparately)
+                && (FilePaths.size() > 1))
             {
                 UString TranslatedString;
                 LangString(IDS_CONTEXT_COMPRESS_SEPARATELY_ZIP, TranslatedString);
@@ -886,7 +889,8 @@ namespace NanaZip::ShellExtension
                         CommandID::CompressToZipSeparately));
             }
 
-            if (ContextMenuFlags & NContextMenuFlags::kCompressTo7zSeparately)
+            if ((ContextMenuFlags & NContextMenuFlags::kCompressTo7zSeparately)
+                && (FilePaths.size() > 1))
             {
                 UString TranslatedString;
                 LangString(IDS_CONTEXT_COMPRESS_SEPARATELY_7Z, TranslatedString);

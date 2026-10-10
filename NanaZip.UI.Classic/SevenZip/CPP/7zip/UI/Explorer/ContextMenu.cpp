@@ -894,9 +894,12 @@ STDMETHODIMP CZipContextMenu::QueryContextMenu(HMENU hMenu, UINT indexMenu,
     }
 
     // **************** NanaZip Modification Start ****************
+    // The batch compress commands are only useful when multiple items are
+    // selected, so we don't show them for a single item.
     // CompressToZipSeparately
     if ((contextMenuFlags & NContextMenuFlags::kCompressToZipSeparately) != 0
-        && !_dropMode)
+        && !_dropMode
+        && _fileNames.Size() > 1)
     {
       CCommandMapItem cmi;
       AddCommand(kCompressToZipSeparately, mainString, cmi);
@@ -905,7 +908,8 @@ STDMETHODIMP CZipContextMenu::QueryContextMenu(HMENU hMenu, UINT indexMenu,
 
     // CompressTo7zSeparately
     if ((contextMenuFlags & NContextMenuFlags::kCompressTo7zSeparately) != 0
-        && !_dropMode)
+        && !_dropMode
+        && _fileNames.Size() > 1)
     {
       CCommandMapItem cmi;
       AddCommand(kCompressTo7zSeparately, mainString, cmi);
